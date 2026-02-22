@@ -1,71 +1,80 @@
-import fs from 'fs';
-import path from 'path';
+/**
+ * Supabase-backed storage replacing the original CSV file approach.
+ * Table: card_claims (card_id TEXT PK, player_name TEXT, claimed_at TIMESTAMPTZ)
+ */
+import { getSupabase } from './supabaseClient';
 
-const CSV_FILE_PATH = path.join(process.cwd(), 'data', 'cards.csv');
-
-interface ClaimRecord {
+export interface CardClaim {
   cardId: string;
   playerName: string;
   claimedAt: string;
 }
 
-// Ensure the CSV file exists with headers
-function ensureFileExists() {
-  if (!fs.existsSync(CSV_FILE_PATH)) {
-    const dir = path.dirname(CSV_FILE_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(CSV_FILE_PATH, 'cardId,playerName,claimedAt\n', 'utf8');
+export async function readClaims(): Promise<CardClaim[]> {
+  const { data, error } = await getSupabase()
+    .from('card_claims')
+    .select('*')
+    .order('claimed_at', { ascending: true });
+
+  if (error) {
+    console.error('[readClaims] Supabase error:', error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row: Record<string, string>) => ({
+    cardId: row.card_id,
+    playerName: row.player_name,
+    claimedAt: row.claimed_at,
+  }));
+}
+
+export async function isCardClaimed(cardId: string): Promise<boolean> {
+  const { count, error } = await getSupabase()
+    .from('card_claims')
+    .select('*', { count: 'exact', head: true })
+    .eq('card_id', cardId);
+
+  if (error) {
+    console.error('[isCardClaimed] Supabase error:', error.message);
+    return false;
+  }
+
+  return (count ?? 0) > 0;
+}
+
+export async function writeClaim(cardId: string, playerName: string): Promise<void> {
+  const { error } = await getSupabase().from('card_claims').insert({
+    card_id: cardId,
+    player_name: playerName,
+    claimed_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.error('[writeClaim] Supabase error:', error.message);
+    throw new Error(error.message);
   }
 }
 
-export function readClaims(): ClaimRecord[] {
-  ensureFileExists();
-  const content = fs.readFileSync(CSV_FILE_PATH, 'utf8');
-  const lines = content.split('\n').filter((line) => line.trim() !== '');
+export async function resetClaims(): Promise<void> {
+  const { error } = await getSupabase()
+    .from('card_claims')
+    .delete()
+    .neq('card_id', ''); // delete all rows
 
-  // Skip header, parse rows
-  return lines.slice(1).map((line) => {
-    // Basic CSV parsing
-    const parts = line.split(',');
-    return {
-      cardId: parts[0]?.trim() || '',
-      playerName: parts[1]?.trim() || '',
-      claimedAt: parts[2]?.trim() || '',
-    };
-  }).filter(record => record.cardId !== '');
+  if (error) {
+    console.error('[resetClaims] Supabase error:', error.message);
+    throw new Error(error.message);
+  }
 }
 
-export function writeClaim(cardId: string, playerName: string): void {
-  ensureFileExists();
-  
-  // Escape commas in playerName just in case
-  const safeName = playerName.replace(/,/g, ' ');
-  const claimedAt = new Date().toISOString();
-  
-  const line = `${cardId},${safeName},${claimedAt}\n`;
-  fs.appendFileSync(CSV_FILE_PATH, line, 'utf8');
-}
+export async function removeClaim(cardId: string): Promise<void> {
+  const { error } = await getSupabase()
+    .from('card_claims')
+    .delete()
+    .eq('card_id', cardId);
 
-export function isCardClaimed(cardId: string): boolean {
-  const claims = readClaims();
-  return claims.some((claim) => claim.cardId === cardId);
-}
-
-export function resetClaims(): void {
-  ensureFileExists();
-  fs.writeFileSync(CSV_FILE_PATH, 'cardId,playerName,claimedAt\n', 'utf8');
-}
-
-export function removeClaim(cardId: string): void {
-  ensureFileExists();
-  const claims = readClaims();
-  const filtered = claims.filter(c => c.cardId !== cardId);
-  
-  let newContent = 'cardId,playerName,claimedAt\n';
-  filtered.forEach(c => {
-    newContent += `${c.cardId},${c.playerName},${c.claimedAt}\n`;
-  });
-  fs.writeFileSync(CSV_FILE_PATH, newContent, 'utf8');
+  if (error) {
+    console.error('[removeClaim] Supabase error:', error.message);
+    throw new Error(error.message);
+  }
 }

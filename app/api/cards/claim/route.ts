@@ -7,25 +7,25 @@ export async function POST(req: NextRequest) {
     const { cardId, playerName } = await req.json();
 
     if (!cardId || !playerName) {
-      return NextResponse.json({ error: 'Missing cardId or playerName' }, { status: 400 });
+      return NextResponse.json({ error: 'Thiếu cardId hoặc playerName' }, { status: 400 });
     }
 
     const card = CARDS.find((c) => c.id === cardId);
     if (!card) {
-      return NextResponse.json({ error: 'Invalid card ID' }, { status: 404 });
+      return NextResponse.json({ error: 'Thẻ không tồn tại' }, { status: 404 });
     }
 
-    if (isCardClaimed(cardId)) {
+    // Check if already claimed (race-condition safe via Supabase PRIMARY KEY constraint)
+    const alreadyClaimed = await isCardClaimed(cardId);
+    if (alreadyClaimed) {
       return NextResponse.json({ error: 'Thẻ này đã bị người khác chọn mất rồi!' }, { status: 409 });
     }
 
-    // Write to CSV
-    writeClaim(cardId, playerName);
+    await writeClaim(cardId, playerName);
 
-    // Return the full card info (amounts, etc) now that it's successfully claimed
     return NextResponse.json({ success: true, card });
   } catch (error) {
     console.error('Error claiming card:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to claim card' }, { status: 500 });
   }
 }
